@@ -22,6 +22,8 @@ class User:
         self.id_str = self.user_json["id_str"]
         self.screen_name = self.user_json["screen_name"]
         self.name = self.user_json["name"]
+        self.description = self.user_json["description"] or ""
+        self.verified = self.user_json["verified"]
         self.created_at = self.json_date_to_stamp(self.user_json["created_at"])
         self.followers_count = self.get_followers_count()
         self.friends_count = self.get_friends_count()
@@ -53,6 +55,18 @@ class User:
         )
         os_time = datetime.strptime(str(time_strpt), "%Y-%m-%d %H:%M:%S")
         return os_time
+
+    def get_name_length(self):
+        return len(self.name)
+
+    def get_screen_name_length(self):
+        return len(self.screen_name)
+
+    def get_description_length(self):
+        return len(self.description)
+
+    def get_verified(self):
+        return self.verified
 
     def get_followers_count(self):
         """
@@ -109,6 +123,10 @@ class Tweet:
     def __init__(self, tweet_json):
         self.tweet_json = tweet_json
         self.user = User(tweet_json)
+        if "retweeted_status" in tweet_json.keys():
+            self.retweet = Tweet(tweet_json["retweeted_status"])
+        else:
+            self.retweet = None
 
         self.text = tweet_json["text"]
         self.timestr = self.json_date_to_stamp(tweet_json["created_at"])
@@ -145,11 +163,25 @@ class Tweet:
         """
         return len(self.text)
 
+    def get_retweet_user_id(self):
+        if self.retweet is None:
+            return None
+        else:
+            return self.retweet.user.id_str
+
     def get_tweet_features(self):
         feature_list = []
         feature_list.append(self.user.get_user_age())  # 1
         feature_list.append(self.user.get_user_favourites())  # 3
         feature_list.append(self.get_hashtag_count())  # 8
         feature_list.append(self.get_text_len())  # 11
+        feature_list.append(self.user.get_name_length())
+        feature_list.append(self.user.get_screen_name_length())
+        feature_list.append(self.user.get_description_length())
+        feature_list.append(self.user.get_verified())
+        feature_list.append(self.user.get_followers_count())
+        feature_list.append(self.user.get_friends_count())
+        feature_list.append(self.user.get_statuses_count())
+        feature_list.append(self.get_retweet_user_id())
 
         return feature_list
