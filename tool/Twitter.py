@@ -66,7 +66,7 @@ class User:
         return len(self.description)
 
     def get_verified(self):
-        return self.verified
+        return "1" if self.verified else "0"
 
     def get_followers_count(self):
         """
@@ -165,7 +165,7 @@ class Tweet:
 
     def get_retweet_user_id(self):
         if self.retweet is None:
-            return None
+            return "0"
         else:
             return self.retweet.user.id_str
 
