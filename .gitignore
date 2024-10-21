@@ -1,0 +1,6 @@
+*.p
+*.zip
+*.tar
+*.tar.gz
+Tmp
+__pycache__
