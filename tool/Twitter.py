@@ -175,13 +175,13 @@ class Tweet:
         feature_list.append(self.user.get_user_favourites())  # 3
         feature_list.append(self.get_hashtag_count())  # 8
         feature_list.append(self.get_text_len())  # 11
-        feature_list.append(self.user.get_name_length())
-        feature_list.append(self.user.get_screen_name_length())
-        feature_list.append(self.user.get_description_length())
+        # feature_list.append(self.user.get_name_length())
+        # feature_list.append(self.user.get_screen_name_length())
+        # feature_list.append(self.user.get_description_length())
         feature_list.append(self.user.get_verified())
         feature_list.append(self.user.get_followers_count())
         feature_list.append(self.user.get_friends_count())
         feature_list.append(self.user.get_statuses_count())
-        feature_list.append(self.get_retweet_user_id())
+        # feature_list.append(self.get_retweet_user_id())
 
         return feature_list
