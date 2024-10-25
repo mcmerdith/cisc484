@@ -131,6 +131,7 @@ class Tweet:
         self.text = tweet_json["text"]
         self.timestr = self.json_date_to_stamp(tweet_json["created_at"])
         self.tid_str = self.tweet_json["id_str"]
+        self.entities = self.tweet_json["entities"]
 
     def json_date_to_stamp(self, json_date):
         """
@@ -168,6 +169,18 @@ class Tweet:
             return "0"
         else:
             return self.retweet.user.id_str
+    
+    def get_retweeted(self):
+        return "1" if self.retweeted_status else "0"
+    
+    def get_url_count(self):
+        return len(self.entities["urls"])
+    
+    def get_media_count(self):
+        if "media" in self.entities:
+          return len(self.entities["media"])
+        else:
+          return "0"
 
     def get_tweet_features(self):
         feature_list = []
@@ -178,6 +191,8 @@ class Tweet:
         # feature_list.append(self.user.get_name_length())
         # feature_list.append(self.user.get_screen_name_length())
         # feature_list.append(self.user.get_description_length())
+        feature_list.append(self.get_url_count())
+        feature_list.append(self.get_media_count())
         feature_list.append(self.user.get_verified())
         feature_list.append(self.user.get_followers_count())
         feature_list.append(self.user.get_friends_count())
