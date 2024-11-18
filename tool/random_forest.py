@@ -1,15 +1,12 @@
 from dataclasses import dataclass
 import datetime
-from functools import reduce
+from multiprocessing import Pool
 from typing import Literal, Self
 import numpy as np
 from sklearn.metrics import accuracy_score
 from numpy.random import default_rng
 
 DEBUG = False
-VERBOSE = False
-
-GRAD_DESC_LEARN_RATE = 0.005
 
 UntrainedValueMode = Literal["majority", "nearest"]
 """How the model should handle unknown values
@@ -27,14 +24,8 @@ def DEBUG_PRINT(*args, **kwargs):
     print("[DEBUG]", *args, **kwargs)
 
 
-def VERBOSE_PRINT(*args, **kwargs):
-    DEBUG_PRINT("[VERBOSE]", *args, **kwargs)
-
-
-def DEBUG_SPACER(shape) -> np.ndarray:
-    spacer = np.zeros(shape, dtype=np.str_)
-    spacer.fill("=")
-    return spacer
+def WARN(*args, **kwargs):
+    print("[WARN]", *args, **kwargs)
 
 
 @dataclass
@@ -102,7 +93,7 @@ class LeafNode(BaseNode):
 
 
 @dataclass
-class StandardNode(BaseNode):
+class BranchNode(BaseNode):
     branches: dict[float, BaseNode]
     majority_label: float
 
@@ -128,7 +119,7 @@ class StandardNode(BaseNode):
 
 
 @dataclass
-class RealValueNode(BaseNode):
+class BinaryThresholdNode(BaseNode):
     threshold: float
     left: BaseNode
     right: BaseNode
@@ -142,9 +133,32 @@ class RealValueNode(BaseNode):
         return self.right
 
 
+############################
+##### Helper Functions #####
+############################
+
+
+def _most_common(x: np.ndarray) -> int:
+    """Return the most common value in `x`
+
+    Parameters
+    ----------
+        `x` : np.ndarray
+            An array of values
+    """
+    possible = np.unique(x)
+    frequency = [len(x[x == value]) for value in possible]
+    return possible[np.argmax(frequency)]
+
+
 def _n_log_n(n: float) -> float:
     """Return the value of `n*log_2(n)`"""
     return n * np.log2(n)
+
+
+############################
+##### Information Gain #####
+############################
 
 
 def _entropy(n: np.ndarray) -> float:
@@ -156,10 +170,12 @@ def _entropy(n: np.ndarray) -> float:
             A 1D array of values
     """
 
-    return -1 * sum([
-        _n_log_n(len(n[n == label]) / n.size)
-        for label in np.unique(n)
-    ])
+    log_sum = 0
+
+    for label in np.unique(n):
+        log_sum += _n_log_n(len(n[n == label]) / n.size)
+
+    return -1 * log_sum
 
 
 def _conditional_entropy(x: np.ndarray, y: np.ndarray) -> float:
@@ -181,11 +197,15 @@ def _conditional_entropy(x: np.ndarray, y: np.ndarray) -> float:
 
     conditional_entropy = 0
     for x_i in np.unique(x):
+        # Get the set of labels associated with each value
         y_x = y[x == x_i]
+        # Get the probability of the value
         p_x = (x[x == x_i]).size / x.size
+        # Sum the logs of the probabilities of each label
         sum_y_x = 0
         for y_x_i in np.unique(y_x):
             sum_y_x += _n_log_n((y_x[y_x == y_x_i]).size / y_x.size)
+        # Add to the total
         conditional_entropy += p_x * sum_y_x
     return -1 * conditional_entropy
 
@@ -215,21 +235,17 @@ def _information_gain(x: np.ndarray, y: np.ndarray) -> list[float]:
     # Calculate entropy of y
     entropy_y = _entropy(y)
 
-    # Calculate entropy of x given y
+    # Calculate information gain of each feature
     information_gain = [
         entropy_y - _conditional_entropy(x[:, i], y)
         for i in range(x.shape[1])
     ]
-    if VERBOSE:
-        VERBOSE_PRINT(
-            f"Information gain of\n{np.c_[x, DEBUG_SPACER(y.shape), y]}\n{
-                information_gain}\n"
-        )
+
     return information_gain
 
 
 def _threshold_information_gain(x: np.ndarray, y: np.ndarray, threshold: float) -> float:
-    """Calculate the information gain of `feature_values` given `y`
+    """Calculate the information gain of `y` given `x` with `threshold`
 
     Parameters
     ----------
@@ -249,13 +265,17 @@ def _threshold_information_gain(x: np.ndarray, y: np.ndarray, threshold: float) 
 
     entropy_y = _entropy(y)
 
+    # Segment the data
     xlt = x[x < threshold]
     yxlt = y[x < threshold]
     xgt = x[x >= threshold]
     yxgt = y[x >= threshold]
 
+    # Calculate the probabilities of the segments
     p_xlt = xlt.size / x.size
     p_xgt = xgt.size / x.size
+
+    # Calculate the entropy of the segments
     entropy_xlt = _conditional_entropy(xlt, yxlt)
     entropy_xgt = _conditional_entropy(xgt, yxgt)
     entropy_y_xt = p_xlt*entropy_xlt + p_xgt*entropy_xgt
@@ -282,9 +302,14 @@ def _feature_set(x: np.ndarray, feature: int) -> np.ndarray:
     return x[:, feature]
 
 
+############################
+#####   Partitioning   #####
+############################
+
+
 def _real_value_split(x: np.ndarray, y: np.ndarray, feature_values: np.ndarray, min_samples: int = 2) -> \
         tuple[float, tuple[np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray]] | None:
-    """Split `x` and `y` into two sets based on the value of `feature_set`
+    """Split `x` and `y` into two sets based on `feature_values`
 
     Parameters
     ----------
@@ -314,37 +339,63 @@ def _real_value_split(x: np.ndarray, y: np.ndarray, feature_values: np.ndarray, 
 
     # Initial settings
     best_threshold = None
+    alt_threshold = None
     best_information_gain = -np.inf
+    alt_information_gain = -np.inf
     best_imbalance = np.inf
 
+    # Calculate possible thresholds
     thresholds = []
-    for i in range(feature_values.size - 1):
-        if y[i] == y[i+1]:
+    sort_order = np.argsort(feature_values)
+    sorted_features = feature_values[sort_order]
+    sorted_y = y[sort_order]
+    for i in range(sorted_features.size - 1):
+        # Throw out thresholds that don't split the data
+        if sorted_y[i] == sorted_y[i+1]:
             continue
-        thresholds.append((feature_values[i] + feature_values[i+1]) / 2)
+        # Add the midpoint between the 2 features as a threshold
+        thresholds.append(
+            sorted_features[i] +
+            ((sorted_features[i+1] - sorted_features[i]) / 2)
+        )
 
+    # Calculate the information gain for each threshold
     for threshold in np.unique(thresholds):
         information_gain = _threshold_information_gain(
             feature_values, y, threshold)
 
+        # Get the segments
         xlt = feature_values < threshold
         xgt = feature_values >= threshold
 
+        # Throw out thresholds that don't split the data
         if xlt.nonzero()[0].size < min_samples or \
                 xgt.nonzero()[0].size < min_samples:
             continue
 
+        # Calculate the imbalance of the segments
         imbalance = np.abs(xlt.nonzero()[0].size - xgt.nonzero()[0].size)
 
-        if information_gain > best_information_gain or \
-                imbalance < best_imbalance:
+        # If information gain is improved save the threshold
+        if information_gain > best_information_gain:
             best_threshold = threshold
             best_information_gain = information_gain
+
+        # If imbalance is reduced save the threshold
+        if imbalance < best_imbalance:
+            alt_threshold = threshold
+            alt_information_gain = information_gain
             best_imbalance = imbalance
 
+    # Quick return if no threshold was found
     if best_threshold is None:
         return None
 
+    # If the information gain is the same, use the threshold with the lowest imbalance
+    if np.isclose(best_information_gain, alt_information_gain):
+        best_threshold = alt_threshold
+
+    # Get the segments
     xlt = feature_values < best_threshold
     xgt = feature_values >= best_threshold
     left_data = x[xlt, :]
@@ -356,7 +407,7 @@ def _real_value_split(x: np.ndarray, y: np.ndarray, feature_values: np.ndarray, 
 
 
 def _partition(x: np.ndarray, y: np.ndarray, feature_values: np.ndarray) -> dict[float, tuple[np.ndarray, np.ndarray]]:
-    """Partition `x` according to `feature`
+    """Partition `x` according to `feature_values`
 
     Parameters
     ----------
@@ -376,15 +427,6 @@ def _partition(x: np.ndarray, y: np.ndarray, feature_values: np.ndarray) -> dict
             with the highest information gain and the corresponding label values
     """
 
-    # Get the values of the selected feature
-    if DEBUG:
-        DEBUG_PRINT("Feature value shape", feature_values.shape)
-    if VERBOSE:
-        VERBOSE_PRINT(
-            f"Feature values\n{
-                np.c_[feature_values, DEBUG_SPACER(y.shape), y]}\n"
-        )
-
     # Partition the new array according to the value of the feature
     partitions = {
         feature_value: (
@@ -393,27 +435,11 @@ def _partition(x: np.ndarray, y: np.ndarray, feature_values: np.ndarray) -> dict
         ) for feature_value in np.unique(feature_values)
     }
 
-    if VERBOSE:
-        VERBOSE_PRINT(*[f"\nPartition created for {feature_value}\n{np.c_[data, DEBUG_SPACER(labels.shape), labels]}\n"
-                      for feature_value, (data, labels) in partitions.items()])
     return partitions
 
 
-def _most_common(x: np.ndarray) -> int:
-    """Return the most common value in `x`
-
-    Parameters
-    ----------
-        `x` : np.ndarray
-            An array of values
-    """
-    possible = np.unique(x)
-    frequency = [len(x[x == value]) for value in possible]
-    return possible[np.argmax(frequency)]
-
-
-def _create_node(x: np.ndarray, y: np.ndarray, *, max_branches: int = None, _include: np.ndarray = None) -> BaseNode:
-    """Create a decision tree node from `x` and `y`
+def _create_node(x: np.ndarray, y: np.ndarray, *, binary_split_threshold: int = None, _include: np.ndarray = None) -> BaseNode:
+    """Create a decision tree from `x` and `y`
 
     Parameters
     ----------
@@ -434,23 +460,23 @@ def _create_node(x: np.ndarray, y: np.ndarray, *, max_branches: int = None, _inc
     """
     assert x.shape[0] == y.size, "x and y must have the same size"
 
-    ### Base Cases ###
+    ##########################
+    ###     Base Cases     ###
+    ##########################
 
     # If there is only one label, return a leaf node
     unique_labels = np.unique(y)
     if unique_labels.size == 1:
-        if VERBOSE:
-            VERBOSE_PRINT("only one label", unique_labels)
         return LeafNode(feature_idx=None, label=unique_labels[0])
 
     # If there is only one set of inputs, return a leaf node
     unique_values = np.unique(x, axis=0)
     if len(unique_values) == 1:
-        if VERBOSE:
-            VERBOSE_PRINT("only one value", unique_values)
         return LeafNode(feature_idx=None, label=_most_common(y))
 
+    ##########################
     ### Recursive Behavior ###
+    ##########################
 
     # Select the best feature to branch on
     if _include is None:
@@ -475,17 +501,17 @@ def _create_node(x: np.ndarray, y: np.ndarray, *, max_branches: int = None, _inc
     # Get the set of values for the feature
     feature_set = _feature_set(x, feature_idx)
 
-    if max_branches is not None and feature_set.size > max_branches:
+    if binary_split_threshold is not None and feature_set.size > binary_split_threshold:
         # Real value split (binary tree)
-        # The feature is not excluded from the next iteration
+        # The feature is not excluded from the next iteration as it may get split again
 
         value_split = _real_value_split(x, y, feature_set)
 
         if value_split is None:
             if DEBUG:
-                DEBUG_PRINT("Failed to create real value split")
+                WARN("Failed to create real value split")
 
-            return LeafNode(feature_idx=feature_idx, label=_most_common(y))
+            # return LeafNode(feature_idx=feature_idx, label=_most_common(y))
         else:
             threshold, \
                 (left_data, left_labels), \
@@ -499,13 +525,13 @@ def _create_node(x: np.ndarray, y: np.ndarray, *, max_branches: int = None, _inc
                 DEBUG_PRINT("Right", right_data.shape[0], "samples and",
                             right_labels.shape[0], "labels")
 
-            return RealValueNode(
+            return BinaryThresholdNode(
                 feature_idx=feature_idx,
                 threshold=threshold,
                 left=_create_node(left_data, left_labels,
-                                  max_branches=max_branches, _include=_next_include),
+                                  binary_split_threshold=binary_split_threshold, _include=_next_include),
                 right=_create_node(right_data, right_labels,
-                                   max_branches=max_branches, _include=_next_include)
+                                   binary_split_threshold=binary_split_threshold, _include=_next_include)
             )
 
     # Create a standard node
@@ -520,85 +546,89 @@ def _create_node(x: np.ndarray, y: np.ndarray, *, max_branches: int = None, _inc
         for feature_value, (p_data, p_labels) in partitions.items():
             DEBUG_PRINT("Partition", feature_value, "contains",
                         p_data.shape[0], "samples and", p_labels.shape[0], "labels")
-            if VERBOSE:
-                VERBOSE_PRINT(
-                    f"Partition {feature_value}\n{
-                        np.c_[p_data, DEBUG_SPACER(p_labels.shape), p_labels]}\n"
-                )
 
     # Create the nodes for each partition
     for feature_value, (p_data, p_labels) in partitions.items():
         nodes[feature_value] = _create_node(
-            p_data, p_labels, max_branches=max_branches, _include=_next_include)
+            p_data, p_labels, binary_split_threshold=binary_split_threshold, _include=_next_include)
 
-    return StandardNode(feature_idx=feature_idx, branches=nodes, majority_label=_most_common(y))
+    return BranchNode(feature_idx=feature_idx, branches=nodes, majority_label=_most_common(y))
 
 
 class MMDecisionTree:
-    def __init__(self, max_branches: int = 10, untrained_value_mode: UntrainedValueMode = "majority"):
+    def __init__(self, binary_split_threshold: int = 10, untrained_value_mode: UntrainedValueMode = "majority"):
         """A decision tree classifier
 
         Parameters
         ----------
-            `untrained_value_mode` : "majority" | "nearest"
-                How the model should handle unknown values
-                "majority" will return the most common label
-                "nearest" will return the label closest to the unknown value
+            `untrained_value_mode` : UntrainedValueMode
         """
         self._tree: BaseNode = None
         self._train_data: np.ndarray = None
         self._train_labels: np.ndarray = None
-        self._max_branches = max_branches
+        self._binary_split_threshold = binary_split_threshold
         self._untrained_value_mode = untrained_value_mode
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> None:
         self._train_data = X
         self._train_labels = y
-        self.tree = _create_node(X, y, max_branches=self._max_branches)
+        self._tree = _create_node(
+            X, y, binary_split_threshold=self._binary_split_threshold
+        )
 
         if DEBUG:
-            DEBUG_PRINT("Tree created with", self.tree.count(), "nodes")
+            DEBUG_PRINT("Tree created with", self._tree.count(), "nodes")
 
     def score(self, X: np.ndarray, y: np.ndarray) -> float:
         return accuracy_score(y, self.predict(X))
 
     def predict(self, X: np.ndarray) -> np.ndarray:
         return np.array([
-            self.tree.predict(X[i, :], self._untrained_value_mode)
+            self._tree.predict(X[i, :], self._untrained_value_mode)
             for i in range(X.shape[0])
         ])
 
 
 class MMRandomForest:
-    def __init__(self, n_trees: int = 100, bootstrap_size: float = 0.25, max_branches: int = 10, untrained_value_mode: UntrainedValueMode = "majority"):
-        self._n_trees = n_trees
-        self._bootstrap_size = bootstrap_size
+    def __init__(self, n_trees: int = 100, bootstrap_size: float = 0.75, binary_split_threshold: int = 10, untrained_value_mode: UntrainedValueMode = "majority", multiprocessing_limit: int = 8):
         self._forest: list[MMDecisionTree] = []
         self._train_data: np.ndarray = None
         self._train_labels: np.ndarray = None
-        self._max_branches = max_branches
+        self._n_trees = n_trees
+        self._bootstrap_size = bootstrap_size
+        self._binary_split_threshold = binary_split_threshold
         self._untrained_value_mode = untrained_value_mode
+        self._multiprocessing_limit = multiprocessing_limit
+
+    def _create_tree(self, idx: int) -> MMDecisionTree:
+        if DEBUG:
+            DEBUG_PRINT("Training tree", idx + 1, "of", self._n_trees)
+
+        random = default_rng()
+
+        samples = random.choice(
+            self._train_data.shape[0],
+            int(self._train_data.shape[0] *
+                np.min([1, self._bootstrap_size])),
+            replace=False
+        )
+        tree = MMDecisionTree(binary_split_threshold=self._binary_split_threshold,
+                              untrained_value_mode=self._untrained_value_mode)
+        tree.fit(self._train_data[samples],
+                 self._train_labels[samples])
+        return tree
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> None:
         if DEBUG:
             start = datetime.datetime.now()
             DEBUG_PRINT("Training started at", start)
+
         self._train_data = X
         self._train_labels = y
-        for i in range(self._n_trees):
-            if DEBUG:
-                DEBUG_PRINT("Training tree", i)
-            random = default_rng()
-            samples = random.choice(
-                self._train_data.shape[0],
-                int(self._train_data.shape[0] *
-                    np.min([1, self._bootstrap_size])),
-                replace=False
-            )
-            tree = MMDecisionTree(self._max_branches,
-                                  self._untrained_value_mode)
-            tree.fit(self._train_data[samples], self._train_labels[samples])
-            self._forest.append(tree)
+
+        # Use multiprocessing to create the trees for quicker training
+        with Pool(self._multiprocessing_limit) as pool:
+            self._forest = pool.map(self._create_tree, range(self._n_trees))
 
         if DEBUG:
             DEBUG_PRINT("Training complete in",
