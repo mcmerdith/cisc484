@@ -222,7 +222,7 @@ def _partition(x: np.ndarray, y: np.ndarray, feature: int) -> dict[float, tuple[
             A 2D array containing `N` samples of `M` features
 
         `y` : np.ndarray<N>
-            A 1D array of the label values
+            A 1D array of the label values 
 
         `feature` : int
             The index of the feature to partition on
@@ -399,7 +399,6 @@ class MMRandomForest:
         self._forest: list[MMDecisionTree] = []
         self._train_data: np.ndarray = None
         self._train_labels: np.ndarray = None
-        self._feature_importances: np.ndarray = None
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> None:
         if DEBUG:
