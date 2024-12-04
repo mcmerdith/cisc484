@@ -42,6 +42,14 @@ There were other attempts at 6-layer models, but this is the one that I will use
 The 18 epoch achieves the best model, Test Loss: 0.1074, Test accuracy: 97.40%
 ```
 
+### Random Vertical Flip
+
+![Random Vertical Flip](random-vertical-flip.png)
+
+```
+The 15 epoch achieves the best model, Test Loss: 0.2070, Test accuracy: 94.40%
+```
+
 ## Other 6-layer experiments
 
 These are the other, less successful 6-layer models.
