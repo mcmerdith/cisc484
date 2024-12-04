@@ -64,7 +64,6 @@ The higher learning rate resulted in some underfitting and high variability with
 
 ```
 The 19 epoch achieves the best model, Test Loss: 0.6100, Test accuracy: 81.90%
-
 ```
 
 ### ADAM (Learning Rate 0.01)
@@ -75,7 +74,6 @@ ADAM performed the best at a learning rate of 0.01. No significant under or over
 
 ```
 The 18 epoch achieves the best model, Test Loss: 0.2229, Test accuracy: 94.10%
-
 ```
 
 ### ADAM (Learning Rate 0.001)
@@ -86,7 +84,6 @@ At a learning rate of 0.001, there was slightly more overfitting.
 
 ```
 The 18 epoch achieves the best model, Test Loss: 0.4210, Test accuracy: 86.00%
-
 ```
 
 ### Adagrad (Learning Rate 0.05)
@@ -97,7 +94,6 @@ Adagrad had significant overfitting at a learning rate of 0.05.
 
 ```
 The 19 epoch achieves the best model, Test Loss: 1.1350, Test accuracy: 68.80%
-
 ```
 
 ### Adagrad (Learning Rate 0.01)
@@ -108,7 +104,6 @@ Adagrad performed best at a learning rate of 0.01 with no significant over or un
 
 ```
 The 18 epoch achieves the best model, Test Loss: 0.2251, Test accuracy: 93.80%
-
 ```
 
 ### Adagrad (Learning Rate 0.001)
@@ -119,7 +114,6 @@ Adagrad was severly overfit at a learning rate of 0.001.
 
 ```
 The 20 epoch achieves the best model, Test Loss: 5.3135, Test accuracy: 14.10%
-
 ```
 
 ### SGD (Learning Rate 0.1)
@@ -130,7 +124,6 @@ SGD performed best with higher learning rates. The highest tested was 0.1.
 
 ```
 The 20 epoch achieves the best model, Test Loss: 0.0772, Test accuracy: 98.10%
-
 ```
 
 ### SGD (Learning Rate 0.05)
@@ -141,7 +134,6 @@ SGD performed worse the lower the learning rate.
 
 ```
 The 19 epoch achieves the best model, Test Loss: 0.3794, Test accuracy: 88.60%
-
 ```
 
 ### SGD (Learning Rate 0.01)
@@ -152,7 +144,6 @@ Below 0.01, SGD began to see significant overfitting.
 
 ```
 The 20 epoch achieves the best model, Test Loss: 1.0317, Test accuracy: 71.00%
-
 ```
 
 ### SGD (Learning Rate 0.001)
@@ -163,7 +154,6 @@ At 0.001, SGD was completely overfit and was barely better than random chance.
 
 ```
 The 18 epoch achieves the best model, Test Loss: 6.3554, Test accuracy: 11.10%
-
 ```
 
 ## Other 6-layer experiments
