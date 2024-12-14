@@ -57,10 +57,17 @@ def create_dataset(filename="dataset.csv", *, input_hours, output_hours):
     X, Y = [], []
     for i in range(len(dataset) - input_window - output_window - 1):
         X.append(dataset[i:(i + input_window)])
-        Y.append(dataset[(i + input_window):(i + input_window + output_window)])
+        Y.append(dataset[(i + input_window)
+                 :(i + input_window + output_window)])
 
     X, y = normalize_3d(np.array(X)), normalize_3d(np.array(Y))
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.2, random_state=0)
 
     return X_train, X_test, y_train, y_test
+
+
+if __name__ == "__main__":
+    X_train, X_test, y_train, y_test = create_dataset(
+        input_hours=12, output_hours=3)
+    print(X_train.shape, X_test.shape, y_train.shape, y_test.shape)
